@@ -1,0 +1,11 @@
+
+{
+  "name": "chatledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A conversation-linked project filesystem and task management system",
+  "scripts": {},
+  "engines": {
+    "node": ">=22 <25"
+  }
+}
