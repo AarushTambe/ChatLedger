@@ -4,8 +4,10 @@
   "private": true,
   "description": "A conversation-linked project filesystem and task management system",
   "scripts": {
-    "test:projects": "tsx services/api/src/test-projects.ts",
-    "test:tasks": "tsx services/api/src/test-tasks.ts",
+    "db:migrate": "tsx services/api/src/run-migration.ts",
+    "test:projects": "tsx tests/test-projects.ts",
+    "test:tasks": "tsx tests/test-tasks.ts",
+    "test:phase1": "tsx tests/test-phase1-hierarchy.ts",
     "dev:api": "tsx services/api/src/dev.ts"
   },
   "engines": {

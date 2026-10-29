@@ -177,3 +177,63 @@ Constraints:
 - Use transactions for multi-table mutations.
 - Use optimistic concurrency through tasks.version.
 - Keep migrations version-controlled and reversible where practical.
+
+
+
+# ChatLedger Database Schema (V2)
+
+PostgreSQL is the canonical persistence layer. Schema changes are applied incrementally via `services/api/migrations/`.
+
+## 1. `schema_migrations`
+Tracks applied migration versions (`001_initial_schema`, `002_filesystem_and_task_hierarchy`, ...).
+
+## 2. `users`
+- `id` (UUID PK), `email` (TEXT UNIQUE), `display_name` (TEXT), `created_at`, `updated_at`.
+- Deleting a user cleans up dependent `task_nodes`, `tasks`, `decisions`, `projects`, and `project_nodes` via `trg_users_before_delete_cleanup` and `ON DELETE CASCADE`.
+
+## 3. `projects`
+- `id` (UUID PK), `user_id` (UUID FK -> `users`), `name` (TEXT), `description` (TEXT), `created_at`, `updated_at`.
+- `UNIQUE (user_id, name)` and `UNIQUE (id, user_id)`.
+- Creating a project via `createProject` atomically creates its root `project_node` (`parent_id IS NULL`, `node_type = 'folder'`, `lifecycle_state = 'planned'`).
+- Deleting a project is restricted (`RESTRICT`) while `tasks` or `decisions` reference it. Once tasks and decisions are cleared, `trg_projects_before_delete_cleanup` removes its multi-level `project_nodes` tree bottom-up.
+
+## 4. `project_nodes`
+- `id` (UUID PK)
+- `user_id` (UUID FK -> `users`)
+- `project_id` (UUID, composite FK `(project_id, user_id)` -> `projects(id, user_id) ON DELETE CASCADE`)
+- `parent_id` (UUID, nullable composite FK `(parent_id, project_id, user_id)` -> `project_nodes(id, project_id, user_id) ON DELETE RESTRICT`)
+- `node_type` (`folder` | `subsystem` | `file` | `specification` | `artifact`)
+- `name` (TEXT, non-blank)
+- `relative_path` (TEXT, nullable)
+- `description` (TEXT, nullable)
+- `lifecycle_state` (`planned` | `present` | `modified` | `missing` | `archived`)
+- `sort_order` (INTEGER, default `0`)
+- `metadata` (JSONB object, default `'{}'`)
+- `source_conversation_id` (UUID, nullable FK -> `conversations(id) ON DELETE SET NULL`)
+- `version` (INTEGER, default `1`, `> 0`)
+- `created_at`, `updated_at`, `archived_at` (TIMESTAMPTZ)
+
+### Key Constraints & Indexes on `project_nodes`
+- `uq_project_nodes_single_root`: `UNIQUE (project_id) WHERE parent_id IS NULL`
+- `uq_project_nodes_active_sibling_name`: `UNIQUE (project_id, parent_id, lower(btrim(name))) WHERE parent_id IS NOT NULL AND lifecycle_state <> 'archived'`
+- `chk_project_nodes_root_invariants`: Root node must have `node_type = 'folder'`, `lifecycle_state <> 'archived'`, and `archived_at IS NULL`.
+- `trg_project_nodes_hierarchy_guard`: Serializes project tree moves with `pg_advisory_xact_lock`, validates `source_conversation_id` ownership, and rejects ancestor cycles.
+- `trg_prevent_root_node_delete`: Blocks deleting a project's root node while the project exists.
+
+## 5. `tasks`
+- `id` (UUID PK), `user_id` (UUID FK -> `users`), `project_id` (UUID, nullable composite FK -> `projects(id, user_id) ON DELETE RESTRICT`)
+- `parent_task_id` (UUID, nullable composite FK `(parent_task_id, user_id)` -> `tasks(id, user_id) ON DELETE RESTRICT`)
+- `title` (TEXT), `description` (TEXT), `acceptance_criteria` (TEXT)
+- `status` (`Proposed` | `Open` | `In Progress` | `Blocked` | `Done` | `Cancelled`)
+- `priority` (`low` | `medium` | `high` | `urgent`)
+- `due_at` (TIMESTAMPTZ), `version` (INTEGER), `created_at`, `updated_at`
+- `trg_tasks_hierarchy_and_scope_guard`: Enforces that `parent.project_id IS NOT DISTINCT FROM child.project_id` (matching both UUIDs and `NULL`), blocks cycles, and prevents changing a task's `project_id` while it has subtasks or linked nodes.
+
+## 6. `task_nodes`
+- `task_id` (UUID), `node_id` (UUID), `user_id` (UUID), `relationship` (`target` | `context` | `verification` | `output`), `created_at` (TIMESTAMPTZ).
+- Composite PK `(task_id, node_id)`.
+- Composite FKs to `tasks(id, user_id)` and `project_nodes(id, user_id)` (`ON DELETE CASCADE`).
+- `trg_task_nodes_scope_guard`: Enforces that the task is assigned to a project and matches the node's `project_id`.
+
+## 7. `conversations`, `projects_conversations`, `task_conversations`, `task_dependencies`, `decisions`, `activity_events`
+Preserved from `001_initial_schema.sql`.

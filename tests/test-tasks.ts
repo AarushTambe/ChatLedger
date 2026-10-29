@@ -1,12 +1,11 @@
-
 import { randomUUID } from "node:crypto";
-import { pool } from "./db";
-import { createProject } from "./projects-repository";
+import { pool } from "../services/api/src/db";
+import { createProject } from "../services/api/src/projects-repository";
 import {
   createTask,
   getTask,
   updateTaskStatus,
-} from "./tasks-repository";
+} from "../services/api/src/tasks-repository";
 
 async function testTasksRepository() {
   const testId = randomUUID();
@@ -134,8 +133,6 @@ async function testTasksRepository() {
     console.log("PASS: stale update rejected");
   } finally {
     try {
-      // Delete tasks before projects because project deletion is restricted
-      // while tasks still reference a project.
       if (taskA) {
         await pool.query("DELETE FROM tasks WHERE id = $1", [taskA]);
       }

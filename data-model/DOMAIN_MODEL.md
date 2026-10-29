@@ -137,3 +137,79 @@ Store timestamps in UTC.
 Use a version number for optimistic concurrency control.
 
 A stale update must be rejected or explicitly reconciled.
+
+
+# ChatLedger Domain Model (V2)
+
+## 1. Workspace and User
+
+A workspace represents the user's working environment and owns all private records.
+All queries and mutations enforce `user_id` ownership on the server.
+
+## 2. Project
+
+A project is the primary scope for structured software project state.
+
+A project owns or organizes:
+- Exactly one logical root filesystem node (`parent_id IS NULL`).
+- A hierarchical tree of nested filesystem nodes.
+- Tasks and subtasks.
+- Linked conversations.
+- Architectural decisions.
+- Artifacts, verification evidence, and activity history.
+
+## 3. Filesystem Node (`project_nodes`)
+
+A filesystem node represents a logical part of the project structure. It is distinct from physical files on disk.
+
+### Node Types
+- `folder`: Structural container.
+- `subsystem`: Bounded architectural area (e.g., Frontend, Backend, Database).
+- `file`: Logical file representation.
+- `specification`: Requirements or design specification.
+- `artifact`: Generated output, build/test report, or deliverable.
+
+### Lifecycle States
+- `planned`: Expresses architectural or implementation intent.
+- `present`: Grounded in observed physical existence.
+- `modified`: Grounded in observed changes.
+- `missing`: Expected path was verified as absent.
+- `archived`: Historically preserved; excluded from active sibling name uniqueness so names can be reused.
+
+### Tree Invariants
+- Each project has exactly one root node (`parent_id IS NULL`, `node_type = 'folder'`, non-archived).
+- Containment is acyclic and scoped to the same `project_id` and `user_id`.
+- Active sibling names under the same parent are unique (case-insensitive, trimmed).
+
+## 4. Task and Subtask (`tasks`)
+
+A task is an actionable unit of work, independent of filesystem containment.
+
+Fields:
+- `id`, `user_id`, `project_id` (nullable for unassigned tasks)
+- `parent_task_id` (nullable self-reference)
+- `title`, `description`, `acceptance_criteria`
+- `status`: `Proposed`, `Open`, `In Progress`, `Blocked`, `Done`, `Cancelled`
+- `priority`: `low`, `medium`, `high`, `urgent`
+- `due_at`, `version`, `created_at`, `updated_at`
+
+### Task Hierarchy Rules
+- Parent tasks and subtasks must share the exact same `user_id` and `project_id` (including when both `project_id` values are `NULL`).
+- Parent-child task cycles are prohibited.
+- Task hierarchy and filesystem hierarchy are independent: one task can link to multiple nodes via `task_nodes`, and one node can be linked to multiple tasks.
+
+## 5. Task Dependencies (`task_dependencies`)
+
+Dependencies express execution prerequisites (`task_id` depends on `depends_on_task_id`), not containment. Self-dependencies and circular dependencies are rejected.
+
+## 6. Conversation (`conversations`)
+
+A conversation is a known source of project context. It may link to projects (`projects_conversations`), tasks (`task_conversations`), nodes (`source_conversation_id`), and decisions. External identifiers are stored only when explicitly provided.
+
+## 7. Decision (`decisions`)
+
+A decision records an agreed architectural or product choice, its rationale, and its provenance. Historical decisions remain retrievable when superseded.
+
+## 8. Activity Event (`activity_events`)
+
+Append-only audit records written in the same database transaction as the mutation they describe.

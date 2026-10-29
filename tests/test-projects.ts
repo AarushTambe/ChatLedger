@@ -1,7 +1,9 @@
-
 import { randomUUID } from "node:crypto";
-import { pool } from "./db";
-import { createProject, listProjects } from "./projects-repository";
+import { pool } from "../services/api/src/db";
+import {
+  createProject,
+  listProjects,
+} from "../services/api/src/projects-repository";
 
 async function testProjectsRepository() {
   const testId = randomUUID();
@@ -52,7 +54,6 @@ async function testProjectsRepository() {
     console.log("PASS: owner can retrieve project");
     console.log("PASS: another user cannot see project");
   } finally {
-    // Deleting users cascades to their projects.
     try {
       if (userA) {
         await pool.query("DELETE FROM users WHERE id = $1", [userA]);

@@ -1,4 +1,3 @@
-
 import { pool } from "./db";
 
 export type TaskStatus =
@@ -11,18 +10,34 @@ export type TaskStatus =
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
+export type TaskNodeRelationship =
+  | "target"
+  | "context"
+  | "verification"
+  | "output";
+
 export interface Task {
   id: string;
   user_id: string;
   project_id: string | null;
+  parent_task_id: string | null;
   title: string;
   description: string | null;
+  acceptance_criteria: string | null;
   status: TaskStatus;
   priority: TaskPriority;
   due_at: Date | null;
   version: number;
   created_at: Date;
   updated_at: Date;
+}
+
+export interface TaskNodeLink {
+  task_id: string;
+  node_id: string;
+  user_id: string;
+  relationship: TaskNodeRelationship;
+  created_at: Date;
 }
 
 const validStatuses: TaskStatus[] = [
@@ -34,17 +49,26 @@ const validStatuses: TaskStatus[] = [
   "Cancelled",
 ];
 
+export interface CreateTaskOptions {
+  parentTaskId?: string | null;
+  acceptanceCriteria?: string | null;
+}
+
 export async function createTask(
   userId: string,
   title: string,
   projectId: string | null = null,
   description: string | null = null,
   priority: TaskPriority = "medium",
+  options: CreateTaskOptions = {},
 ): Promise<Task> {
   const cleanTitle = title.trim();
 
   if (!userId) throw new Error("A user ID is required.");
   if (!cleanTitle) throw new Error("Task title cannot be empty.");
+
+  const parentTaskId = options.parentTaskId ?? null;
+  const acceptanceCriteria = options.acceptanceCriteria ?? null;
 
   const client = await pool.connect();
 
@@ -52,10 +76,26 @@ export async function createTask(
     await client.query("BEGIN");
 
     const result = await client.query<Task>(
-      `INSERT INTO tasks (user_id, project_id, title, description, priority)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO tasks (
+         user_id,
+         project_id,
+         parent_task_id,
+         title,
+         description,
+         acceptance_criteria,
+         priority
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [userId, projectId, cleanTitle, description, priority],
+      [
+        userId,
+        projectId,
+        parentTaskId,
+        cleanTitle,
+        description,
+        acceptanceCriteria,
+        priority,
+      ],
     );
 
     const task = result.rows[0];
@@ -71,7 +111,11 @@ export async function createTask(
         "task.created",
         "task",
         task.id,
-        JSON.stringify({ title: task.title, status: task.status }),
+        JSON.stringify({
+          title: task.title,
+          status: task.status,
+          parent_task_id: task.parent_task_id,
+        }),
       ],
     );
 
@@ -83,6 +127,73 @@ export async function createTask(
   } finally {
     client.release();
   }
+}
+
+export async function linkTaskToNode(
+  userId: string,
+  taskId: string,
+  nodeId: string,
+  relationship: TaskNodeRelationship = "target",
+): Promise<TaskNodeLink> {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query<TaskNodeLink>(
+      `INSERT INTO task_nodes (task_id, node_id, user_id, relationship)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (task_id, node_id)
+       DO UPDATE SET relationship = EXCLUDED.relationship
+       RETURNING *`,
+      [taskId, nodeId, userId, relationship],
+    );
+
+    const link = result.rows[0];
+
+    const taskRow = await client.query<{ project_id: string | null }>(
+      "SELECT project_id FROM tasks WHERE id = $1 AND user_id = $2",
+      [taskId, userId],
+    );
+
+    await client.query(
+      `INSERT INTO activity_events
+         (user_id, project_id, task_id, event_type, entity_type, entity_id, payload)
+       VALUES ($1, $2, $3, 'task.node_linked', 'task', $3, $4::jsonb)`,
+      [
+        userId,
+        taskRow.rows[0]?.project_id ?? null,
+        taskId,
+        JSON.stringify({
+          node_id: nodeId,
+          relationship: link.relationship,
+        }),
+      ],
+    );
+
+    await client.query("COMMIT");
+    return link;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function getTaskNodes(
+  userId: string,
+  taskId: string,
+): Promise<TaskNodeLink[]> {
+  const result = await pool.query<TaskNodeLink>(
+    `SELECT *
+     FROM task_nodes
+     WHERE user_id = $1 AND task_id = $2
+     ORDER BY created_at ASC`,
+    [userId, taskId],
+  );
+
+  return result.rows;
 }
 
 export async function getTask(
@@ -98,7 +209,6 @@ export async function getTask(
 
   return result.rows[0] ?? null;
 }
-
 
 export async function updateTaskStatus(
   userId: string,
@@ -119,7 +229,6 @@ export async function updateTaskStatus(
   try {
     await client.query("BEGIN");
 
-    // Lock the task row while checking and updating its state.
     const currentResult = await client.query<{
       status: TaskStatus;
       version: number;
@@ -214,4 +323,3 @@ export async function listTasks(
 
   return result.rows;
 }
-

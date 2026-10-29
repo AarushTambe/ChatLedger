@@ -68,3 +68,39 @@ Unrestricted access to every existing conversation, automatic modification of bu
 4. Web dashboard.
 5. ChatGPT integration.
 6. Cross-conversation continuity and deployment.
+
+
+
+# ChatLedger Architecture (V2)
+
+## 1. System Role & Boundaries
+
+ChatLedger is the persistent project-state and context-organization subsystem within **Framer**.
+
+### ChatLedger Owns
+- Canonical structured project state in PostgreSQL.
+- Project and logical filesystem-node hierarchy (`project_nodes`).
+- Task hierarchy, dependencies, acceptance criteria, and task-to-node links (`tasks`, `task_dependencies`, `task_nodes`).
+- Architectural decisions, conversation references, provenance, and append-only `activity_events`.
+- Bounded context assembly from structured project state.
+
+### Framer Provides / Reuses
+- Repository intelligence, source-file reading/editing, and FTS5/code indexing.
+- Command execution and test verification.
+- AI workflow orchestration and tool transports.
+
+## 2. Governing Workflow
+
+**Understand → Retrieve → Plan → Implement → Verify → Persist → Resume**
+
+ChatLedger strictly separates intended work (`planned` nodes, `Proposed`/`Open` tasks) from verified implementation (`present`/`modified` nodes, verification evidence, `Done` tasks).
+
+## 3. Application Layers
+
+1. **Transport**: Express HTTP API (`services/api/src/server.ts`) and future MCP/tool adapters.
+2. **Validation & Services**: Input validation, optimistic concurrency (`expectedVersion`), and transactional coordination.
+3. **Repositories**:
+   - `projects-repository.ts`: Atomic project + root node creation and listing.
+   - `nodes-repository.ts`: Logical filesystem tree operations, versioned archival, and child queries.
+   - `tasks-repository.ts`: Tasks, subtasks, status transitions, and `task_nodes` links.
+4. **PostgreSQL Persistence**: Declarative constraints, partial unique indexes, and hierarchy/scope guard triggers (`migrations/001_initial_schema.sql`, `migrations/002_filesystem_and_task_hierarchy.sql`).
