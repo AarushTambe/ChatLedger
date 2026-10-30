@@ -8,6 +8,8 @@
     "test:projects": "tsx tests/test-projects.ts",
     "test:tasks": "tsx tests/test-tasks.ts",
     "test:phase1": "tsx tests/test-phase1-hierarchy.ts",
+    "test:phase2": "tsx tests/test-phase2-operations.ts",
+    "test:all": " npm run test:projects && npm run test:tasks && npm run test:phase1 && npm run test:phase2",
     "dev:api": "tsx services/api/src/dev.ts"
   },
   "engines": {
